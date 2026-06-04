@@ -1,0 +1,6 @@
+{
+  "name": "Google Ads Intelligent Dashboard",
+  "description": "Hệ thống kết nối Google Ads API thông qua OAuth, tự động đồng bộ dữ liệu chiến dịch quảng cáo, phân tích tối ưu Click, Chuyển đổi và tự động lập báo cáo tháng chuyên nghiệp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
