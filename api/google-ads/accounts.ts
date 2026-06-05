@@ -78,27 +78,29 @@ export default async function handler(req: any, res: any) {
     // 1. Handle GET: Retrieve accounts
     if (req.method === 'GET') {
       try {
-        if (supabaseUrl && serviceKey) {
-          try {
-            const accounts = await fetchSupabase('google_ads_accounts', 'GET', undefined, '?select=*&order=created_at.desc');
-            const mappedAccounts = accounts.map((acc: any) => ({
-              id: acc.id,
-              accountName: acc.account_name,
-              customerId: acc.customer_id,
-              loginCustomerId: acc.login_customer_id || '',
-              status: acc.status || 'connected',
-              lastSyncAt: acc.last_sync_at,
-              createdAt: acc.created_at
-            }));
-
-            return res.status(200).json({
-              success: true,
-              data: mappedAccounts,
-              accounts: mappedAccounts
+        if (process.env.NODE_ENV === 'production' || (supabaseUrl && serviceKey)) {
+          if (!supabaseUrl || !serviceKey) {
+            return res.status(400).json({
+              success: false,
+              message: "Missing Supabase environment variables"
             });
-          } catch (supabaseErr: any) {
-            console.error('Supabase query error, falling back to local JSON file:', supabaseErr);
           }
+          const accounts = await fetchSupabase('google_ads_accounts', 'GET', undefined, '?select=*&order=created_at.desc');
+          const mappedAccounts = accounts.map((acc: any) => ({
+            id: acc.id,
+            accountName: acc.account_name,
+            customerId: acc.customer_id,
+            loginCustomerId: acc.login_customer_id || '',
+            status: acc.status || 'connected',
+            lastSyncAt: acc.last_sync_at,
+            createdAt: acc.created_at
+          }));
+
+          return res.status(200).json({
+            success: true,
+            data: mappedAccounts,
+            accounts: mappedAccounts
+          });
         }
 
         // Falling back to Local JSON database
@@ -211,90 +213,93 @@ export default async function handler(req: any, res: any) {
           }
         ];
 
-        if (supabaseUrl && serviceKey) {
-          try {
-            // Write core account to Supabase
-            await fetchSupabase('google_ads_accounts', 'POST', {
-              id: newAcc.id,
-              account_name: newAcc.accountName,
-              customer_id: newAcc.customerId,
-              login_customer_id: newAcc.loginCustomerId || null,
-              status: newAcc.status,
-              last_sync_at: newAcc.lastSyncAt,
-              created_at: newAcc.createdAt
+        if (process.env.NODE_ENV === 'production' || (supabaseUrl && serviceKey)) {
+          if (!supabaseUrl || !serviceKey) {
+            return res.status(400).json({
+              success: false,
+              message: "Missing Supabase environment variables"
             });
-
-            // Write sync log
-            try {
-              await fetchSupabase('sync_logs', 'POST', {
-                id: syncLog.id,
-                google_ads_account_id: syncLog.googleAdsAccountId,
-                account_name: syncLog.accountName,
-                sync_type: syncLog.syncType,
-                status: syncLog.status,
-                rows_inserted: syncLog.rowsInserted,
-                started_at: syncLog.startedAt,
-                finished_at: syncLog.finishedAt
-              });
-            } catch (eLog) {
-              console.warn('Sync log creation failed in Supabase:', eLog);
-            }
-
-            // Write base campaign metrics
-            try {
-              for (const m of targetMetrics) {
-                await fetchSupabase('campaign_daily_metrics', 'POST', {
-                  id: m.id,
-                  google_ads_account_id: m.googleAdsAccountId,
-                  date: m.date,
-                  campaign_id: m.campaignId,
-                  campaign_name: m.campaignName,
-                  campaign_status: m.campaignStatus,
-                  budget: m.budget,
-                  impressions: m.impressions,
-                  clicks: m.clicks,
-                  cost: m.cost,
-                  ctr: m.ctr,
-                  average_cpc: m.averageCpc,
-                  conversions: m.conversions,
-                  conversion_rate: m.conversionRate,
-                  cost_per_conversion: m.costPerConversion,
-                  created_at: m.createdAt
-                });
-              }
-            } catch (eMetrics) {
-              console.warn('Seeding campaign metrics failed in Supabase:', eMetrics);
-            }
-
-            // Write base recommendations
-            try {
-              for (const r of recommendationsList) {
-                await fetchSupabase('recommendations', 'POST', {
-                  id: r.id,
-                  google_ads_account_id: r.googleAdsAccountId,
-                  date: r.date,
-                  level: r.level,
-                  type: r.type,
-                  title: r.title,
-                  description: r.description,
-                  action_suggestion: r.actionSuggestion,
-                  campaign_id: r.campaignId,
-                  campaign_name: r.campaignName,
-                  created_at: r.createdAt
-                });
-              }
-            } catch (eRecos) {
-              console.warn('Seeding recommendations failed in Supabase:', eRecos);
-            }
-
-            return res.status(200).json({
-              success: true,
-              data: newAcc,
-              account: newAcc
-            });
-          } catch (supabaseErr: any) {
-            console.error('Supabase write error, falling back to local JSON database:', supabaseErr);
           }
+
+          // Write core account to Supabase
+          await fetchSupabase('google_ads_accounts', 'POST', {
+            id: newAcc.id,
+            account_name: newAcc.accountName,
+            customer_id: newAcc.customerId,
+            login_customer_id: newAcc.loginCustomerId || null,
+            status: newAcc.status,
+            last_sync_at: newAcc.lastSyncAt,
+            created_at: newAcc.createdAt
+          });
+
+          // Write sync log
+          try {
+            await fetchSupabase('sync_logs', 'POST', {
+              id: syncLog.id,
+              google_ads_account_id: syncLog.googleAdsAccountId,
+              account_name: syncLog.accountName,
+              sync_type: syncLog.syncType,
+              status: syncLog.status,
+              rows_inserted: syncLog.rowsInserted,
+              started_at: syncLog.startedAt,
+              finished_at: syncLog.finishedAt
+            });
+          } catch (eLog) {
+            console.warn('Sync log creation failed in Supabase:', eLog);
+          }
+
+          // Write base campaign metrics
+          try {
+            for (const m of targetMetrics) {
+              await fetchSupabase('campaign_daily_metrics', 'POST', {
+                id: m.id,
+                google_ads_account_id: m.googleAdsAccountId,
+                date: m.date,
+                campaign_id: m.campaignId,
+                campaign_name: m.campaignName,
+                campaign_status: m.campaignStatus,
+                budget: m.budget,
+                impressions: m.impressions,
+                clicks: m.clicks,
+                cost: m.cost,
+                ctr: m.ctr,
+                average_cpc: m.averageCpc,
+                conversions: m.conversions,
+                conversion_rate: m.conversionRate,
+                cost_per_conversion: m.costPerConversion,
+                created_at: m.createdAt
+              });
+            }
+          } catch (eMetrics) {
+            console.warn('Seeding campaign metrics failed in Supabase:', eMetrics);
+          }
+
+          // Write base recommendations
+          try {
+            for (const r of recommendationsList) {
+              await fetchSupabase('recommendations', 'POST', {
+                id: r.id,
+                google_ads_account_id: r.googleAdsAccountId,
+                date: r.date,
+                level: r.level,
+                type: r.type,
+                title: r.title,
+                description: r.description,
+                action_suggestion: r.actionSuggestion,
+                campaign_id: r.campaignId,
+                campaign_name: r.campaignName,
+                created_at: r.createdAt
+              });
+            }
+          } catch (eRecos) {
+            console.warn('Seeding recommendations failed in Supabase:', eRecos);
+          }
+
+          return res.status(200).json({
+            success: true,
+            data: newAcc,
+            account: newAcc
+          });
         }
 
         // Falling back to Local JSON database write

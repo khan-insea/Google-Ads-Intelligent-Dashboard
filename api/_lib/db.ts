@@ -16,7 +16,7 @@ import {
 const DB_FILE = path.join(process.cwd(), 'data', 'db_store.json');
 
 // Helper to make standalone HTTP calls to Supabase PostgREST api
-async function fetchSupabase(tableName: string, method: 'GET' | 'POST', body?: any, query?: string) {
+async function fetchSupabase(tableName: string, method: 'GET' | 'POST' | 'PATCH' | 'DELETE', body?: any, query?: string) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!supabaseUrl || !serviceKey) {
@@ -51,7 +51,16 @@ async function fetchSupabase(tableName: string, method: 'GET' | 'POST', body?: a
     throw new Error(`Supabase API responded with status ${res.status}: ${text}`);
   }
 
-  return await res.json();
+  if (res.status === 204) {
+    return null;
+  }
+
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return text;
+  }
 }
 
 export class DBManager {
@@ -79,13 +88,17 @@ export class DBManager {
       sync_logs: [],
       recommendations: []
     };
-    this.loadLocal();
-    if (this.localData.google_ads_accounts.length === 0) {
-      this.seedLocalDemoData();
+    
+    if (process.env.NODE_ENV !== 'production') {
+      this.loadLocal();
+      if (this.localData.google_ads_accounts.length === 0) {
+        this.seedLocalDemoData();
+      }
     }
   }
 
   private ensureLocalDirectory() {
+    if (process.env.NODE_ENV === 'production') return;
     const dir = path.dirname(DB_FILE);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -93,6 +106,7 @@ export class DBManager {
   }
 
   private loadLocal() {
+    if (process.env.NODE_ENV === 'production') return;
     if (fs.existsSync(DB_FILE)) {
       try {
         const fileContent = fs.readFileSync(DB_FILE, 'utf-8');
@@ -107,6 +121,7 @@ export class DBManager {
   }
 
   public saveLocal() {
+    if (process.env.NODE_ENV === 'production') return;
     try {
       this.ensureLocalDirectory();
       fs.writeFileSync(DB_FILE, JSON.stringify(this.localData, null, 2), 'utf-8');
@@ -116,16 +131,209 @@ export class DBManager {
   }
 
   // --- API Methods ---
-  public getAccounts(): GoogleAdsAccount[] {
+  public async syncWithSupabase() {
     const supabaseUrl = process.env.SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (supabaseUrl && serviceKey) {
-      // In a synchronous function, we might not block on await, but Vercel can't block here.
-      // We return local copy as fallback/cache or fetch async elsewhere.
-      // To satisfy caller expectations, we read from file system. Or if called in an API route, 
-      // the API route can do async fetch. Let's return localData since localData is always synched, or 
-      // let's read the latest.
+    if (!supabaseUrl || !serviceKey) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Thiếu cấu hình biến môi trường Supabase ở production!');
+      }
+      return;
     }
+
+    try {
+      const fetchTable = async (tableName: string) => {
+        try {
+          return await fetchSupabase(tableName, 'GET', undefined, '?select=*') || [];
+        } catch (err) {
+          console.error(`Failed to fetch table ${tableName} from Supabase:`, err);
+          return [];
+        }
+      };
+
+      const [
+        accounts,
+        campaignMetrics,
+        adGroupMetrics,
+        keywordMetrics,
+        searchTermMetrics,
+        monthlyReports,
+        syncLogs,
+        recommendations
+      ] = await Promise.all([
+        fetchTable('google_ads_accounts'),
+        fetchTable('campaign_daily_metrics'),
+        fetchTable('ad_group_daily_metrics'),
+        fetchTable('keyword_daily_metrics'),
+        fetchTable('search_term_daily_metrics'),
+        fetchTable('monthly_reports'),
+        fetchTable('sync_logs'),
+        fetchTable('recommendations')
+      ]);
+
+      if (Array.isArray(accounts)) {
+        this.localData.google_ads_accounts = accounts.map((acc: any) => ({
+          id: acc.id,
+          accountName: acc.account_name,
+          customerId: acc.customer_id,
+          loginCustomerId: acc.login_customer_id || '',
+          status: acc.status || 'connected',
+          lastSyncAt: acc.last_sync_at,
+          createdAt: acc.created_at,
+          refresh_token: acc.refresh_token
+        }));
+      }
+
+      if (Array.isArray(campaignMetrics)) {
+        this.localData.campaign_daily_metrics = campaignMetrics.map((m: any) => ({
+          id: m.id,
+          googleAdsAccountId: m.google_ads_account_id,
+          date: m.date,
+          campaignId: m.campaign_id,
+          campaignName: m.campaign_name,
+          campaignStatus: m.campaign_status,
+          budget: Number(m.budget) || 0,
+          impressions: Number(m.impressions) || 0,
+          clicks: Number(m.clicks) || 0,
+          cost: Number(m.cost) || 0,
+          ctr: Number(m.ctr) || 0,
+          averageCpc: Number(m.average_cpc) || 0,
+          conversions: Number(m.conversions) || 0,
+          conversionRate: Number(m.conversion_rate) || 0,
+          costPerConversion: Number(m.cost_per_conversion) || 0,
+          createdAt: m.created_at
+        }));
+      }
+
+      if (Array.isArray(adGroupMetrics)) {
+        this.localData.ad_group_daily_metrics = adGroupMetrics.map((m: any) => ({
+          id: m.id,
+          googleAdsAccountId: m.google_ads_account_id,
+          date: m.date,
+          campaignId: m.campaign_id,
+          campaignName: m.campaign_name,
+          adGroupId: m.ad_group_id,
+          adGroupName: m.ad_group_name,
+          impressions: Number(m.impressions) || 0,
+          clicks: Number(m.clicks) || 0,
+          cost: Number(m.cost) || 0,
+          ctr: Number(m.ctr) || 0,
+          averageCpc: Number(m.average_cpc) || 0,
+          conversions: Number(m.conversions) || 0,
+          conversionRate: Number(m.conversion_rate) || 0,
+          costPerConversion: Number(m.cost_per_conversion) || 0,
+          createdAt: m.created_at
+        }));
+      }
+
+      if (Array.isArray(keywordMetrics)) {
+        this.localData.keyword_daily_metrics = keywordMetrics.map((m: any) => ({
+          id: m.id,
+          googleAdsAccountId: m.google_ads_account_id,
+          date: m.date,
+          campaignId: m.campaign_id,
+          campaignName: m.campaign_name,
+          adGroupId: m.ad_group_id,
+          adGroupName: m.ad_group_name,
+          keyword: m.keyword,
+          matchType: m.match_type,
+          impressions: Number(m.impressions) || 0,
+          clicks: Number(m.clicks) || 0,
+          cost: Number(m.cost) || 0,
+          ctr: Number(m.ctr) || 0,
+          averageCpc: Number(m.average_cpc) || 0,
+          conversions: Number(m.conversions) || 0,
+          conversionRate: Number(m.conversion_rate) || 0,
+          costPerConversion: Number(m.cost_per_conversion) || 0,
+          createdAt: m.created_at
+        }));
+      }
+
+      if (Array.isArray(searchTermMetrics)) {
+        this.localData.search_term_daily_metrics = searchTermMetrics.map((m: any) => ({
+          id: m.id,
+          googleAdsAccountId: m.google_ads_account_id,
+          date: m.date,
+          campaignId: m.campaign_id,
+          campaignName: m.campaign_name,
+          adGroupId: m.ad_group_id,
+          adGroupName: m.ad_group_name,
+          searchTerm: m.search_term,
+          impressions: Number(m.impressions) || 0,
+          clicks: Number(m.clicks) || 0,
+          cost: Number(m.cost) || 0,
+          conversions: Number(m.conversions) || 0,
+          ctr: Number(m.ctr) || 0,
+          averageCpc: Number(m.average_cpc) || 0,
+          costPerConversion: Number(m.cost_per_conversion) || 0,
+          recommendation: m.recommendation,
+          createdAt: m.created_at
+        }));
+      }
+
+      if (Array.isArray(monthlyReports)) {
+        this.localData.monthly_reports = monthlyReports.map((r: any) => ({
+          id: r.id,
+          googleAdsAccountId: r.google_ads_account_id,
+          month: r.month,
+          year: r.year,
+          totalCost: Number(r.total_cost) || 0,
+          totalClicks: Number(r.total_clicks) || 0,
+          totalImpressions: Number(r.total_impressions) || 0,
+          totalConversions: Number(r.total_conversions) || 0,
+          averageCtr: Number(r.average_ctr) || 0,
+          averageCpc: Number(r.average_cpc) || 0,
+          averageCpa: Number(r.average_cpa) || 0,
+          conversionRate: Number(r.conversion_rate) || 0,
+          summary: r.summary,
+          recommendations: Array.isArray(r.recommendations) ? r.recommendations : JSON.parse(r.recommendations || '[]'),
+          bestCampaign: r.best_campaign,
+          worstCampaign: r.worst_campaign,
+          bestDevice: r.best_device,
+          bestLocation: r.best_location,
+          bestHour: r.best_hour,
+          createdAt: r.created_at
+        }));
+      }
+
+      if (Array.isArray(syncLogs)) {
+        this.localData.sync_logs = syncLogs.map((l: any) => ({
+          id: l.id,
+          googleAdsAccountId: l.google_ads_account_id,
+          accountName: l.account_name,
+          syncType: l.sync_type,
+          status: l.status,
+          rowsInserted: Number(l.rows_inserted) || 0,
+          errorMessage: l.error_message,
+          startedAt: l.started_at,
+          finishedAt: l.finished_at
+        }));
+      }
+
+      if (Array.isArray(recommendations)) {
+        this.localData.recommendations = recommendations.map((r: any) => ({
+          id: r.id,
+          googleAdsAccountId: r.google_ads_account_id,
+          date: r.date,
+          level: r.level,
+          type: r.type,
+          title: r.title,
+          description: r.description,
+          actionSuggestion: r.action_suggestion,
+          campaignId: r.campaign_id,
+          campaignName: r.campaign_name,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (err) {
+      console.error('Failed processing Supabase query synchronization inside DBManager:', err);
+      if (process.env.NODE_ENV === 'production') {
+        throw err;
+      }
+    }
+  }
+
+  public getAccounts(): GoogleAdsAccount[] {
     this.loadLocal();
     return this.localData.google_ads_accounts || [];
   }
@@ -171,7 +379,7 @@ export class DBManager {
   }
 
   // Writers / Adders
-  public addAccount(account: GoogleAdsAccount) {
+  public async addAccount(account: GoogleAdsAccount) {
     this.loadLocal();
     const idx = this.localData.google_ads_accounts.findIndex(a => a.id === account.id || a.customerId === account.customerId);
     if (idx !== -1) {
@@ -180,9 +388,34 @@ export class DBManager {
       this.localData.google_ads_accounts.push(account);
     }
     this.saveLocal();
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && serviceKey) {
+      try {
+        const check = await fetchSupabase('google_ads_accounts', 'GET', undefined, `?id=eq.${encodeURIComponent(account.id)}`);
+        const itemBody = {
+          id: account.id,
+          account_name: account.accountName,
+          customer_id: account.customerId,
+          login_customer_id: account.loginCustomerId || null,
+          status: account.status || 'connected',
+          last_sync_at: account.lastSyncAt || null,
+          created_at: account.createdAt || new Date().toISOString()
+        };
+        if (check && check.length > 0) {
+          await fetchSupabase('google_ads_accounts', 'PATCH', itemBody, `?id=eq.${encodeURIComponent(account.id)}`);
+        } else {
+          await fetchSupabase('google_ads_accounts', 'POST', itemBody);
+        }
+      } catch (err) {
+        console.error('Failed to save account to Supabase:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+      }
+    }
   }
 
-  public updateAccountSync(id: string, date: string) {
+  public async updateAccountSync(id: string, date: string) {
     this.loadLocal();
     const acc = this.localData.google_ads_accounts.find(a => a.id === id);
     if (acc) {
@@ -190,9 +423,23 @@ export class DBManager {
       acc.status = 'connected';
       this.saveLocal();
     }
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && serviceKey) {
+      try {
+        await fetchSupabase('google_ads_accounts', 'PATCH', {
+          last_sync_at: date,
+          status: 'connected'
+        }, `?id=eq.${encodeURIComponent(id)}`);
+      } catch (err) {
+        console.error('Failed to update account sync status in Supabase:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+      }
+    }
   }
 
-  public saveCampaignMetrics(metrics: CampaignDailyMetric[]) {
+  public async saveCampaignMetrics(metrics: CampaignDailyMetric[]) {
     this.loadLocal();
     metrics.forEach(item => {
       const idx = this.localData.campaign_daily_metrics.findIndex(
@@ -207,17 +454,74 @@ export class DBManager {
       }
     });
     this.saveLocal();
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && serviceKey) {
+      try {
+        for (const item of metrics) {
+          const body = {
+            id: item.id,
+            google_ads_account_id: item.googleAdsAccountId,
+            date: item.date,
+            campaign_id: item.campaignId,
+            campaign_name: item.campaignName,
+            campaign_status: item.campaignStatus,
+            budget: item.budget,
+            impressions: item.impressions,
+            clicks: item.clicks,
+            cost: item.cost,
+            ctr: item.ctr,
+            average_cpc: item.averageCpc,
+            conversions: item.conversions,
+            conversion_rate: item.conversionRate,
+            cost_per_conversion: item.costPerConversion,
+            created_at: item.createdAt || new Date().toISOString()
+          };
+          const check = await fetchSupabase('campaign_daily_metrics', 'GET', undefined, `?id=eq.${encodeURIComponent(item.id)}`);
+          if (check && check.length > 0) {
+            await fetchSupabase('campaign_daily_metrics', 'PATCH', body, `?id=eq.${encodeURIComponent(item.id)}`);
+          } else {
+            await fetchSupabase('campaign_daily_metrics', 'POST', body);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to save campaign metrics to Supabase:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+      }
+    }
   }
 
-  public saveSyncLog(log: SyncLog) {
+  public async saveSyncLog(log: SyncLog) {
     this.localData.sync_logs.unshift(log); // newest first
     if (this.localData.sync_logs.length > 100) {
       this.localData.sync_logs = this.localData.sync_logs.slice(0, 100);
     }
     this.saveLocal();
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && serviceKey) {
+      try {
+        await fetchSupabase('sync_logs', 'POST', {
+          id: log.id,
+          google_ads_account_id: log.googleAdsAccountId,
+          account_name: log.accountName,
+          sync_type: log.syncType,
+          status: log.status,
+          rows_inserted: log.rowsInserted,
+          error_message: log.errorMessage || null,
+          started_at: log.startedAt,
+          finished_at: log.finishedAt
+        });
+      } catch (err) {
+        console.error('Failed to save sync log to Supabase:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+      }
+    }
   }
 
-  public createMonthlyReport(report: MonthlyReport) {
+  public async createMonthlyReport(report: MonthlyReport) {
     this.loadLocal();
     const idx = this.localData.monthly_reports.findIndex(
       r => r.googleAdsAccountId === report.googleAdsAccountId && r.month === report.month && r.year === report.year
@@ -228,14 +532,63 @@ export class DBManager {
       this.localData.monthly_reports.unshift(report);
     }
     this.saveLocal();
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && serviceKey) {
+      try {
+        const check = await fetchSupabase('monthly_reports', 'GET', undefined, `?id=eq.${encodeURIComponent(report.id)}`);
+        const reportBody = {
+          id: report.id,
+          google_ads_account_id: report.googleAdsAccountId,
+          month: report.month,
+          year: report.year,
+          total_cost: report.totalCost,
+          total_clicks: report.totalClicks,
+          total_impressions: report.totalImpressions,
+          total_conversions: report.totalConversions,
+          average_ctr: report.averageCtr,
+          average_cpc: report.averageCpc,
+          average_cpa: report.averageCpa,
+          conversion_rate: report.conversionRate,
+          best_campaign: report.bestCampaign,
+          worst_campaign: report.worstCampaign,
+          best_device: report.bestDevice,
+          best_location: report.bestLocation,
+          best_hour: report.bestHour,
+          summary: report.summary,
+          recommendations: report.recommendations,
+          created_at: report.createdAt || new Date().toISOString()
+        };
+        if (check && check.length > 0) {
+          await fetchSupabase('monthly_reports', 'PATCH', reportBody, `?id=eq.${encodeURIComponent(report.id)}`);
+        } else {
+          await fetchSupabase('monthly_reports', 'POST', reportBody);
+        }
+      } catch (err) {
+        console.error('Failed to write monthly report to Supabase:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+      }
+    }
   }
 
-  public clearLiveMetricsForSync(accountId: string, date: string) {
+  public async clearLiveMetricsForSync(accountId: string, date: string) {
     this.loadLocal();
     this.localData.campaign_daily_metrics = this.localData.campaign_daily_metrics.filter(
       m => !(m.googleAdsAccountId === accountId && m.date === date)
     );
     this.saveLocal();
+
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supabaseUrl && serviceKey) {
+      try {
+        await fetchSupabase('campaign_daily_metrics', 'DELETE', undefined, `?google_ads_account_id=eq.${encodeURIComponent(accountId)}&date=eq.${encodeURIComponent(date)}`);
+      } catch (err) {
+        console.error('Failed to clear live metrics in Supabase:', err);
+        if (process.env.NODE_ENV === 'production') throw err;
+      }
+    }
   }
 
   public queryCampaigns(
@@ -252,7 +605,7 @@ export class DBManager {
     });
   }
 
-  public generateRecommendationsFromData(accountId: string, metrics: CampaignDailyMetric[]): Recommendation[] {
+  public async generateRecommendationsFromData(accountId: string, metrics: CampaignDailyMetric[]): Promise<Recommendation[]> {
     const list: Recommendation[] = [];
     const dateStr = new Date().toISOString().split('T')[0];
 
@@ -372,6 +725,32 @@ export class DBManager {
     if (list.length > 0) {
       this.localData.recommendations = list;
       this.saveLocal();
+
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      if (supabaseUrl && serviceKey) {
+        try {
+          await fetchSupabase('recommendations', 'DELETE', undefined, `?google_ads_account_id=eq.${encodeURIComponent(accountId)}`);
+          for (const r of list) {
+            await fetchSupabase('recommendations', 'POST', {
+              id: r.id,
+              google_ads_account_id: r.googleAdsAccountId,
+              date: r.date,
+              level: r.level,
+              type: r.type,
+              title: r.title,
+              description: r.description,
+              action_suggestion: r.actionSuggestion,
+              campaign_id: r.campaignId || null,
+              campaign_name: r.campaignName || null,
+              created_at: r.createdAt || new Date().toISOString()
+            });
+          }
+        } catch (err) {
+          console.error('Failed to save recommendations to Supabase:', err);
+          if (process.env.NODE_ENV === 'production') throw err;
+        }
+      }
     }
     return list;
   }

@@ -20,6 +20,9 @@ async function initDbAndServices() {
     const dbModule = await import('./_lib/db.js');
     dbStore = dbModule.dbStore;
   }
+  if (process.env.NODE_ENV === 'production') {
+    await dbStore.syncWithSupabase();
+  }
   if (!GoogleAdsService) {
     const adsModule = await import('./_lib/google_ads_service.js');
     GoogleAdsService = adsModule.GoogleAdsService;
@@ -34,6 +37,14 @@ app.use(express.json());
 
 // Lazy-resolve DB/Services middleware before any handler triggers
 app.use(async (req, res, next) => {
+  if (process.env.NODE_ENV === 'production') {
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing Supabase environment variables"
+      });
+    }
+  }
   try {
     await initDbAndServices();
     next();

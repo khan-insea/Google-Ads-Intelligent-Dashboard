@@ -155,84 +155,86 @@ export default async function handler(req: any, res: any) {
   }
 
   // 2. Process Local JSON file Cleanup
-  try {
-    const localData = getLocalData();
-    if (localData.google_ads_accounts && Array.isArray(localData.google_ads_accounts)) {
-      const groups: Record<string, any[]> = {};
-      for (const acc of localData.google_ads_accounts) {
-        const cleanCID = (acc.customerId || '').replace(/\D/g, "");
-        if (!cleanCID) continue;
-        if (!groups[cleanCID]) {
-          groups[cleanCID] = [];
-        }
-        groups[cleanCID].push(acc);
-      }
-
-      const mergedIndices: string[] = [];
-      const finalAccounts: any[] = [];
-      let normalizedCount = 0;
-
-      for (const [cleanCID, list] of Object.entries(groups)) {
-        let primary = list.find(a => !String(a.accountName || '').includes('Live Connected'));
-        if (!primary) {
-          primary = list[0];
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      const localData = getLocalData();
+      if (localData.google_ads_accounts && Array.isArray(localData.google_ads_accounts)) {
+        const groups: Record<string, any[]> = {};
+        for (const acc of localData.google_ads_accounts) {
+          const cleanCID = (acc.customerId || '').replace(/\D/g, "");
+          if (!cleanCID) continue;
+          if (!groups[cleanCID]) {
+            groups[cleanCID] = [];
+          }
+          groups[cleanCID].push(acc);
         }
 
-        const oldCID = primary.customerId;
-        const oldLCID = primary.loginCustomerId;
-        primary.customerId = cleanCID;
-        primary.loginCustomerId = oldLCID ? oldLCID.replace(/\D/g, "") : "";
+        const mergedIndices: string[] = [];
+        const finalAccounts: any[] = [];
+        let normalizedCount = 0;
 
-        if (oldCID !== primary.customerId || oldLCID !== primary.loginCustomerId) {
-          normalizedCount++;
-        }
+        for (const [cleanCID, list] of Object.entries(groups)) {
+          let primary = list.find(a => !String(a.accountName || '').includes('Live Connected'));
+          if (!primary) {
+            primary = list[0];
+          }
 
-        finalAccounts.push(primary);
+          const oldCID = primary.customerId;
+          const oldLCID = primary.loginCustomerId;
+          primary.customerId = cleanCID;
+          primary.loginCustomerId = oldLCID ? oldLCID.replace(/\D/g, "") : "";
 
-        const duplicates = list.filter(a => a.id !== primary.id);
-        for (const dup of duplicates) {
-          mergedIndices.push(dup.id);
+          if (oldCID !== primary.customerId || oldLCID !== primary.loginCustomerId) {
+            normalizedCount++;
+          }
 
-          // Update metrics in local JSON db
-          const metricsKeys = [
-            'campaign_daily_metrics',
-            'ad_group_daily_metrics',
-            'keyword_daily_metrics',
-            'search_term_daily_metrics',
-            'monthly_reports',
-            'sync_logs',
-            'recommendations'
-          ];
+          finalAccounts.push(primary);
 
-          for (const key of metricsKeys) {
-            if (localData[key] && Array.isArray(localData[key])) {
-              localData[key].forEach((row: any) => {
-                if (row.googleAdsAccountId === dup.id) {
-                  row.googleAdsAccountId = primary.id;
-                }
-              });
+          const duplicates = list.filter(a => a.id !== primary.id);
+          for (const dup of duplicates) {
+            mergedIndices.push(dup.id);
+
+            // Update metrics in local JSON db
+            const metricsKeys = [
+              'campaign_daily_metrics',
+              'ad_group_daily_metrics',
+              'keyword_daily_metrics',
+              'search_term_daily_metrics',
+              'monthly_reports',
+              'sync_logs',
+              'recommendations'
+            ];
+
+            for (const key of metricsKeys) {
+              if (localData[key] && Array.isArray(localData[key])) {
+                localData[key].forEach((row: any) => {
+                  if (row.googleAdsAccountId === dup.id) {
+                    row.googleAdsAccountId = primary.id;
+                  }
+                });
+              }
             }
           }
         }
+
+        localData.google_ads_accounts = finalAccounts;
+        saveLocalData(localData);
+
+        report.localDb = {
+          normalizedCount,
+          mergedIdentifiers: mergedIndices,
+          remainingUnique: finalAccounts.map(a => ({
+            id: a.id,
+            accountName: a.accountName,
+            customerId: a.customerId,
+            loginCustomerId: a.loginCustomerId,
+            status: a.status
+          }))
+        };
       }
-
-      localData.google_ads_accounts = finalAccounts;
-      saveLocalData(localData);
-
-      report.localDb = {
-        normalizedCount,
-        mergedIdentifiers: mergedIndices,
-        remainingUnique: finalAccounts.map(a => ({
-          id: a.id,
-          accountName: a.accountName,
-          customerId: a.customerId,
-          loginCustomerId: a.loginCustomerId,
-          status: a.status
-        }))
-      };
+    } catch (eLocal) {
+      console.error('Local JSON file clean-up error:', eLocal);
     }
-  } catch (eLocal) {
-    console.error('Local JSON file clean-up error:', eLocal);
   }
 
   return res.status(200).json({

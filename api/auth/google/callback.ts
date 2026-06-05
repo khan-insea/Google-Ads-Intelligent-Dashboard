@@ -427,41 +427,43 @@ export default async function handler(req: any, res: any) {
     }
 
     // 4. Save to low-dependency local JSON file just in case for development mode consistency
-    try {
-      const localData = getLocalData();
-      if (!localData.google_ads_accounts) localData.google_ads_accounts = [];
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        const localData = getLocalData();
+        if (!localData.google_ads_accounts) localData.google_ads_accounts = [];
 
-      // Check existence by state (id) or raw customerId
-      const idx = localData.google_ads_accounts.findIndex((a: any) => {
-        const cleanCid = (a.customerId || '').replace(/\D/g, "");
-        return (state && a.id === state) || (cleanCid === cleanAccount.customerId);
-      });
+        // Check existence by state (id) or raw customerId
+        const idx = localData.google_ads_accounts.findIndex((a: any) => {
+          const cleanCid = (a.customerId || '').replace(/\D/g, "");
+          return (state && a.id === state) || (cleanCid === cleanAccount.customerId);
+        });
 
-      if (idx !== -1) {
-        const existingLocal = localData.google_ads_accounts[idx];
-        cleanAccount.id = existingLocal.id;
-        cleanAccount.accountName = existingLocal.accountName;
-        cleanAccount.createdAt = existingLocal.createdAt || cleanAccount.createdAt;
-        localData.google_ads_accounts[idx] = { ...localData.google_ads_accounts[idx], ...cleanAccount };
-      } else {
-        localData.google_ads_accounts.push(cleanAccount);
+        if (idx !== -1) {
+          const existingLocal = localData.google_ads_accounts[idx];
+          cleanAccount.id = existingLocal.id;
+          cleanAccount.accountName = existingLocal.accountName;
+          cleanAccount.createdAt = existingLocal.createdAt || cleanAccount.createdAt;
+          localData.google_ads_accounts[idx] = { ...localData.google_ads_accounts[idx], ...cleanAccount };
+        } else {
+          localData.google_ads_accounts.push(cleanAccount);
+        }
+
+        if (!localData.sync_logs) localData.sync_logs = [];
+        localData.sync_logs.unshift({
+          id: `log-${Date.now()}`,
+          googleAdsAccountId: cleanAccount.id,
+          accountName: cleanAccount.accountName,
+          syncType: 'manual',
+          status: 'success',
+          rowsInserted: 5,
+          startedAt: new Date(Date.now() - 5000).toISOString(),
+          finishedAt: new Date().toISOString()
+        });
+
+        saveLocalData(localData);
+      } catch (fsErr) {
+        console.warn('Fallback file-write skipped:', fsErr);
       }
-
-      if (!localData.sync_logs) localData.sync_logs = [];
-      localData.sync_logs.unshift({
-        id: `log-${Date.now()}`,
-        googleAdsAccountId: cleanAccount.id,
-        accountName: cleanAccount.accountName,
-        syncType: 'manual',
-        status: 'success',
-        rowsInserted: 5,
-        startedAt: new Date(Date.now() - 5000).toISOString(),
-        finishedAt: new Date().toISOString()
-      });
-
-      saveLocalData(localData);
-    } catch (fsErr) {
-      console.warn('Fallback file-write skipped:', fsErr);
     }
 
     // Done! Redirect with positive outcome parameters
