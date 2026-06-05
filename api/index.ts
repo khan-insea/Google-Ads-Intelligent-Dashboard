@@ -17,11 +17,11 @@ let GoogleAdsService: any = null;
 
 async function initDbAndServices() {
   if (!dbStore) {
-    const dbModule = await import('./_lib/db');
+    const dbModule = await import('./_lib/db.js');
     dbStore = dbModule.dbStore;
   }
   if (!GoogleAdsService) {
-    const adsModule = await import('../src/lib/server/google_ads_service');
+    const adsModule = await import('../src/lib/server/google_ads_service.js');
     GoogleAdsService = adsModule.GoogleAdsService;
   }
 }
