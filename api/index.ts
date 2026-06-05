@@ -10,7 +10,7 @@ import {
   MonthlyReport, 
   SyncLog, 
   GoogleAdsAccount 
-} from '../src/types';
+} from './_lib/types.js';
 
 let dbStore: any = null;
 let GoogleAdsService: any = null;
@@ -21,7 +21,7 @@ async function initDbAndServices() {
     dbStore = dbModule.dbStore;
   }
   if (!GoogleAdsService) {
-    const adsModule = await import('../src/lib/server/google_ads_service.js');
+    const adsModule = await import('./_lib/google_ads_service.js');
     GoogleAdsService = adsModule.GoogleAdsService;
   }
 }
@@ -347,7 +347,7 @@ app.post('/api/google-ads/accounts', (req, res) => {
 
 // API: 6. Manual trigger synchronizations
 app.post('/api/google-ads/sync', async (req, res) => {
-  const { accountId, date } = req.body;
+  const { accountId, date } = req.body || {};
 
   if (!accountId) {
     return res.status(400).json({ success: false, message: 'Thiếu Google Ads Account ID' });
@@ -355,10 +355,32 @@ app.post('/api/google-ads/sync', async (req, res) => {
 
   const targetDate = date || new Date().toISOString().split('T')[0];
   const accounts = dbStore.getAccounts();
-  const acc = accounts.find(a => a.id === accountId);
+  const acc = accounts.find((a: any) => a.id === accountId);
 
   if (!acc) {
     return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản quảng cáo tương ứng' });
+  }
+
+  // Checking requirements for live accounts
+  const isDemo = acc.id.includes('demo');
+  if (!isDemo) {
+    const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+    const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
+
+    if (!devToken || !clientId || !clientSecret) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing Google Ads environment variables"
+      });
+    }
+
+    if (!acc.refresh_token) {
+      return res.status(400).json({
+        success: false,
+        message: "Tài khoản này chưa có Google OAuth refresh_token. Vui lòng bấm Kết Nối Google Ads trước."
+      });
+    }
   }
 
   const startedAt = new Date().toISOString();
@@ -381,9 +403,10 @@ app.post('/api/google-ads/sync', async (req, res) => {
   dbStore.saveSyncLog(syncLogEntry);
 
   if (result.error) {
-    return res.status(500).json({ 
+    return res.status(400).json({ 
       success: false, 
-      message: `Đồng bộ thất bại: ${result.error}`, 
+      message: result.error.includes('Google Ads API error') ? result.error : `Google Ads API error: ${result.error}`, 
+      details: result.errorDetails || null,
       log: syncLogEntry 
     });
   }

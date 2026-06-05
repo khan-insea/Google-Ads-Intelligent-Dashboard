@@ -10,7 +10,7 @@ import {
   MonthlyReport, 
   SyncLog, 
   Recommendation
-} from '../../src/types';
+} from './types.js';
 
 // Let's establish a simple, file-based database for zero-config persistence
 const DB_FILE = path.join(process.cwd(), 'data', 'db_store.json');
