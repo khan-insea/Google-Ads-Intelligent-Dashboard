@@ -94,7 +94,7 @@ export default function Header({
           <h1 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
             Hệ Thống Phân Tích Google Ads
             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-800">
-              API Live v16
+              API Live {(import.meta as any).env?.VITE_GOOGLE_ADS_API_VERSION || 'v17'}
             </span>
           </h1>
           <p className="text-xs text-slate-500 mt-1">Đồng bộ tự động qua OAuth bảo mật • Cập nhật: {activeAccount?.lastSyncAt ? new Date(activeAccount.lastSyncAt).toLocaleString('vi-VN') : 'Mới tạo'}</p>

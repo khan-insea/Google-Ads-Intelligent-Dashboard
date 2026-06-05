@@ -96,8 +96,10 @@ export class GoogleAdsService {
     targetDate: string
   ): Promise<{ rowsCount: number; error?: string }> {
     const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
-    const customerId = account.customerId.replace(/-/g, ''); // must remove dashes
-    const loginCustomerId = account.loginCustomerId ? account.loginCustomerId.replace(/-/g, '') : undefined;
+    
+    // Normalize Customer IDs (keep only digits)
+    const cleanCustomerId = account.customerId.replace(/\D/g, "");
+    const cleanLoginCustomerId = account.loginCustomerId ? account.loginCustomerId.replace(/\D/g, "") : undefined;
     
     // Check if configuration lacks live credentials
     if (!devToken || !process.env.GOOGLE_ADS_CLIENT_ID || account.id.includes('demo')) {
@@ -131,11 +133,14 @@ export class GoogleAdsService {
         'Authorization': `Bearer ${accessToken}`,
       };
 
-      if (loginCustomerId) {
-        headers['login-customer-id'] = loginCustomerId;
+      if (cleanLoginCustomerId) {
+        headers['login-customer-id'] = cleanLoginCustomerId;
       }
 
-      const url = `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:search`;
+      const apiVersion = process.env.GOOGLE_ADS_API_VERSION || 'v17';
+      const url = `https://googleads.googleapis.com/${apiVersion}/customers/${cleanCustomerId}/googleAds:search`;
+      console.log(`[GoogleAdsService] Calling Google Ads API from Server: POST ${url}`);
+
       const response = await fetch(url, {
         method: 'POST',
         headers,
@@ -144,6 +149,22 @@ export class GoogleAdsService {
 
       if (!response.ok) {
         const errorText = await response.text();
+        const isHtml = errorText.trim().startsWith('<') || errorText.includes('<html>');
+        
+        if (response.status === 404) {
+          return {
+            rowsCount: 0,
+            error: "Google Ads API URL không đúng hoặc API version không còn được hỗ trợ. Hãy kiểm tra base URL googleads.googleapis.com và GOOGLE_ADS_API_VERSION."
+          };
+        }
+
+        if (isHtml) {
+          return {
+            rowsCount: 0,
+            error: "Google Ads API endpoint sai hoặc version không được hỗ trợ."
+          };
+        }
+
         throw new Error(`Google Ads search API error: ${errorText}`);
       }
 
