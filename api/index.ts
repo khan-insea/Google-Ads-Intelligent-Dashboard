@@ -4,30 +4,29 @@
  */
 
 import express from 'express';
-import path from 'path';
-import { createServer as createViteServer } from 'vite';
-import { dbStore } from './server/db';
-import { GoogleAdsService } from './server/google_ads_service';
+import dotenv from 'dotenv';
+import { dbStore } from '../server/db';
+import { GoogleAdsService } from '../server/google_ads_service';
 import { 
   CampaignDailyMetric, 
   MonthlyReport, 
   SyncLog, 
-  GoogleAdsAccount,
-  Recommendation
-} from './src/types';
+  GoogleAdsAccount 
+} from '../src/types';
+
+// Load environmental variables safely
+dotenv.config();
 
 const app = express();
-const PORT = 3000;
-
 app.use(express.json());
 
-// API: 1. Admin Login Endpoint
+// API: 1. Admin Login Endpoint (POST ONLY)
 app.post('/api/auth/login', (req, res) => {
   const adminEmail = process.env.ADMIN_EMAIL;
   const adminPassword = process.env.ADMIN_PASSWORD;
   const isProduction = process.env.NODE_ENV === 'production';
 
-  // Return a clear, informative error if environment variables are missing
+  // Strict checking in production for security and clear debugging
   if (!adminEmail || !adminPassword) {
     if (isProduction) {
       return res.status(500).json({
@@ -85,11 +84,13 @@ app.post('/api/auth/password-login', (req, res) => {
 // API: 2. Google OAuth Start Redirect Generator
 app.get('/api/auth/google/start', (req, res) => {
   const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
-  const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+  const host = req.get('host') || 'google-ads-intelligent-dashboard.vercel.app';
+  const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+  const fallbackRedirectUri = `${protocol}://${host}/api/auth/google/callback`;
+  const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || fallbackRedirectUri;
 
   if (!clientId) {
-    // If no client ID configured yet, redirect to built-in elegant Google Consent Mock Tool
-    const mockAuthUrl = `${req.protocol}://${req.get('host')}/api/auth/google/mock-consent?redirect_uri=${encodeURIComponent(redirectUri)}`;
+    const mockAuthUrl = `${protocol}://${host}/api/auth/google/mock-consent?redirect_uri=${encodeURIComponent(redirectUri)}`;
     return res.json({ url: mockAuthUrl });
   }
 
@@ -177,17 +178,17 @@ app.get('/api/auth/google/mock-consent', (req, res) => {
 // API: 3. OAuth Callback Handler
 app.get(['/api/auth/google/callback', '/api/auth/google/callback/'], async (req, res) => {
   const code = req.query.code as string;
-  const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/auth/google/callback`;
+  const host = req.get('host') || 'google-ads-intelligent-dashboard.vercel.app';
+  const protocol = host.includes('localhost') || host.includes('127.0.0.1') ? 'http' : 'https';
+  const fallbackRedirectUri = `${protocol}://${host}/api/auth/google/callback`;
+  const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || fallbackRedirectUri;
 
   if (!code) {
     return res.status(400).send('Authentication code is missing.');
   }
 
   try {
-    // Exchange tokens (will return mock tokens if keys not set)
     const tokens = await GoogleAdsService.exchangeCodeForTokens(code, redirectUri);
-    
-    // Save account info
     const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID || '831-294-1188';
     const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '';
     
@@ -208,7 +209,6 @@ app.get(['/api/auth/google/callback', '/api/auth/google/callback/'], async (req,
 
     dbStore.addAccount(cleanAccount);
 
-    // Write success sync logs to db
     dbStore.saveSyncLog({
       id: `log-${Date.now()}`,
       googleAdsAccountId: cleanAccount.id,
@@ -220,7 +220,6 @@ app.get(['/api/auth/google/callback', '/api/auth/google/callback/'], async (req,
       finishedAt: new Date().toISOString()
     });
 
-    // Send visual popup message and close the window
     return res.send(`
       <html>
         <head><title>Liên Kết Thành Công</title></head>
@@ -276,7 +275,6 @@ app.post('/api/google-ads/accounts', (req, res) => {
 
   dbStore.addAccount(newAcc);
 
-  // Write sync logs to simulate success metrics loading
   dbStore.saveSyncLog({
     id: `log-${Date.now()}`,
     googleAdsAccountId: newAcc.id,
@@ -288,7 +286,6 @@ app.post('/api/google-ads/accounts', (req, res) => {
     finishedAt: new Date().toISOString()
   });
 
-  // Seed metrics for this manual account to populate metrics instantly!
   const targetDate = new Date().toISOString().split('T')[0];
   const campaignsBase = [
     { id: 'mcamp-1', name: 'Search - Thương Hiệu Mới', status: 'ENABLED' as const, budget: 150000, ctrBase: 10.2, cpcBase: 1800, convRateBase: 7.5, volBase: 800 },
@@ -365,7 +362,6 @@ app.post('/api/google-ads/sync', async (req, res) => {
     });
   }
 
-  // Update last sync time
   dbStore.updateAccountSync(acc.id, finishedAt);
 
   return res.json({ 
@@ -378,8 +374,8 @@ app.post('/api/google-ads/sync', async (req, res) => {
 // API: 7. Get Overview metrics with dates filter
 app.get('/api/reports/overview', (req, res) => {
   const accountId = req.query.accountId as string || 'acc-demo-google-ads';
-  const startDate = req.query.startDate as string; // YYYY-MM-DD
-  const endDate = req.query.endDate as string;     // YYYY-MM-DD
+  const startDate = req.query.startDate as string; 
+  const endDate = req.query.endDate as string;     
 
   const rawCampaignMetrics = dbStore.getCampaignMetrics();
   
@@ -418,7 +414,6 @@ app.get('/api/reports/overview', (req, res) => {
   const cpaAvg = totalConversions > 0 ? totalCost / totalConversions : 0;
   const convRateAvg = totalClicks > 0 ? (totalConversions / totalClicks) * 100 : 0;
 
-  // Group metrics by local date format for chart representation
   const dateGroups: { [date: string]: { cost: number; clicks: number; conversions: number; impressions: number } } = {};
   filtered.forEach(m => {
     if (!dateGroups[m.date]) {
@@ -443,7 +438,6 @@ app.get('/api/reports/overview', (req, res) => {
     };
   });
 
-  // Calculate campaign specific totals to select best and worst performers
   const campSum: { [name: string]: { cost: number; conversions: number; clicks: number } } = {};
   filtered.forEach(m => {
     if (!campSum[m.campaignName]) {
@@ -471,7 +465,6 @@ app.get('/api/reports/overview', (req, res) => {
   });
 
   if (worstCampaign === 'Chưa xác định') {
-    // Alternate look for worst Campaign
     let maxCpa = -1;
     Object.entries(campSum).forEach(([name, sum]) => {
       const cpa = sum.conversions > 0 ? sum.cost / sum.conversions : 0;
@@ -504,13 +497,11 @@ app.get('/api/reports/overview', (req, res) => {
 app.get('/api/reports/click-optimization', (req, res) => {
   const accountId = req.query.accountId as string || 'acc-demo-google-ads';
   
-  // Aggregate recent overall 30 days totals per campaign for smart checks
   const metrics = dbStore.getCampaignMetrics().filter(m => m.googleAdsAccountId === accountId);
   if (metrics.length === 0) {
     return res.json({ success: true, data: [] });
   }
 
-  // Create campaign totals
   const store: { [id: string]: { id: string; name: string; cost: number; clicks: number; impressions: number; conversions: number; ctr: number; averageCpc: number } } = {};
   
   metrics.forEach(m => {
@@ -542,7 +533,6 @@ app.get('/api/reports/click-optimization', (req, res) => {
     let suggestion = 'Duy trì trạng thái và tiếp tục theo dõi diễn biến từ khóa.';
     let priority: 'Cao' | 'Trung bình' | 'Thấp' = 'Thấp';
 
-    // Rule check sequence
     if (ctr < 3.0) {
       issue = 'CTR rất thấp (< 3%)';
       suggestion = 'Viết lại tiêu đề mẫu quảng cáo (Ad Copy), chèn thêm từ khóa động (DKI) và kiểm tra lại điểm chất lượng từ khóa.';
@@ -591,7 +581,6 @@ app.get('/api/reports/conversion-optimization', (req, res) => {
     return res.json({ success: true, data: [] });
   }
 
-  // Create campaign totals
   const store: { [id: string]: { id: string; name: string; cost: number; clicks: number; conversions: number } } = {};
   
   metrics.forEach(m => {
@@ -621,7 +610,7 @@ app.get('/api/reports/conversion-optimization', (req, res) => {
       issue = 'Chi tiêu lớn không phát sinh Chuyển đổi';
       suggestion = 'Tạm dừng phân phối đối với các từ khóa tốn tiền mà không chuyển đổi. Kiểm tra xem mã theo dõi chuyển đổi Google Ads có bị lỗi không.';
       priority = 'Cao';
-    } else if (cpa > 150000) { // arbitrary threshold
+    } else if (cpa > 150000) { 
       issue = 'CPA thực tế vượt ngưỡng (CPA cao)';
       suggestion = 'Cân nhắc hạ giá thầu tCPA bớt 10%, loại bỏ các vị trí phân phối hoặc thiết bị không sinh hiệu quả.';
       priority = 'Cao';
@@ -665,7 +654,6 @@ app.get('/api/reports/monthly', (req, res) => {
     return res.json({ success: true, data: found });
   }
 
-  // Create an automated smart fallback report based on current data
   const metrics = dbStore.getCampaignMetrics().filter(m => m.googleAdsAccountId === accountId);
   const matchedMetrics = metrics.filter(m => {
     const d = new Date(m.date);
@@ -727,12 +715,11 @@ app.get('/api/recommendations', (req, res) => {
   return res.json({ success: true, data: recs });
 });
 
-// API: 13. Export Excel (Simulated responsive binary stream)
+// API: 13. Export Excel
 app.get('/api/reports/export-excel', (req, res) => {
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename=baocao_googleads_optimization.xlsx');
   
-  // Return simple, elegant, printable text CSV acting as Excel
   const csvContent = `
 Sheet: Google Ads Overview Summary
 Chi so,Gia tri thực tế
@@ -753,9 +740,9 @@ Best Hour,20:00 - 22:00
   return res.send(csvContent);
 });
 
-// API: 14. Export PDF (Serves print formatted dynamic report stream)
+// API: 14. Export PDF
 app.get('/api/reports/export-pdf', (req, res) => {
-  res.setHeader('Content-Type', 'text/html'); // Send easily custom styling layouts
+  res.setHeader('Content-Type', 'text/html');
   return res.send(`
     <html>
       <body style="font-family: sans-serif; padding: 40px; color: #333;">
@@ -776,7 +763,7 @@ app.get('/api/reports/export-pdf', (req, res) => {
         <ul>
           <li>Tăng ngân sách chiến dịch Search Brand lên thêm 20% vì CPA cực thấp chỉ 18.000đ.</li>
           <li>Review lại toàn bộ Banner và Form đăng ký của chiến dịch Display Remarketing.</li>
-          <li>Thêm tối thiểu 20 từ khóa phủ định nhắm vào nhóm từ khóa thiết kế web giá rẻ (500k) ở Hà Nội.</li>
+          <li>Thêm tối thiểu 20 từ khóa phủ định nhắm vào nhóm từ khóa thiết kế web giá rẻ (500k) ở chiến dịch Hà Nội.</li>
         </ul>
         <script>window.print();</script>
       </body>
@@ -790,8 +777,6 @@ app.post('/api/reports/send-email', async (req, res) => {
   const resendApiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.REPORT_FROM_EMAIL || 'googleads@a96agency.com';
   const targetEmail = mailTo || process.env.REPORT_TO_EMAIL || 'ads.a96agency@gmail.com';
-
-  console.log(`Sending automated email report to ${targetEmail} using Resend...`);
 
   const htmlBody = `
     <div style="font-family: system-ui, sans-serif; background-color: #f8fafc; padding: 40px; color: #1e293b;">
@@ -808,21 +793,16 @@ app.post('/api/reports/send-email', async (req, res) => {
           ${summaryText || 'Tổng quan hiệu suất Google Ads tháng vừa qua ghi nhận chỉ số chuyển đổi tăng trưởng mạnh. CTR đạt 4.12%, CPA duy trì hiệu quả ở mức 191k VND.'}
         </div>
 
-        <p style="font-size: 15px; line-height: 1.6; color: #334155; margin-top: 24px;">Vui lòng truy cập trang điều hành chính để xem chi tiết biểu đồ thời gian thực và tải đầy đủ file excel đính kèm.</p>
-        
-        <div style="text-align: center; margin: 32px 0 16px 0;">
-          <a href="${process.env.APP_URL || 'http://localhost:3000'}/admin/dashboard" style="background-color: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px; display: inline-block;">Đến Trang Quản Trị</a>
-        </div>
+        <p style="font-size: 15px; line-height: 1.6; color: #334155; margin-top: 24px;">Vui lòng đăng nhập trang điều hành chính để xem chi tiết biểu đồ thời gian thực và tải đầy đủ file excel đính kèm.</p>
         
         <div style="border-top: 1px solid #e2e8f0; padding-top: 16px; margin-top: 32px; text-align: center; color: #94a3b8; font-size: 12px;">
-          © 2026 A96 Agency. Bảo mật tuyệt đối qua Google Ads API OAuth.
+          © 2026 A96 Agency. Bảo mật qua Google Ads API OAuth.
         </div>
       </div>
     </div>
   `;
 
   if (!resendApiKey || resendApiKey.startsWith('re_your_api_key')) {
-    // Elegant log simulation in terminal & soft response if keys are not ready yet
     console.log(`[RESEND SIMULATION] Mail successfully scheduled to send via simulated server: \nTO: ${targetEmail}\nFROM: ${fromEmail}\nSUBJECT: ${subject || 'Báo cáo Google Ads Tháng'}`);
     return res.json({ 
       success: true, 
@@ -869,9 +849,7 @@ app.get('/api/cron/daily-sync', async (req, res) => {
     return res.status(401).json({ success: false, message: 'Unauthorized. CRON_SECRET is missing or invalid.' });
   }
 
-  console.log('Automated Hourly/Daily Cron Job started at 02:00 AM context time...');
-  
-  // Sync the previous day metrics for all connected accounts
+  console.log('Automated Daily Cron Job started...');
   const accounts = dbStore.getAccounts();
   const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
   let syncedCount = 0;
@@ -899,31 +877,9 @@ app.get('/api/cron/daily-sync', async (req, res) => {
 
   return res.json({
     success: true,
-    message: `Cron completed: daily-sync successfully processed ${syncedCount} rows for ${accounts.length} connected Google Ads accounts.`,
+    message: `Cron completed successfully. Processed ${syncedCount} rows for ${accounts.length} accounts.`,
     yesterdayDate: yesterdayStr
   });
 });
 
-// ----------------- VITE HANDLER AS STANDARD -----------------
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    // SPA Fallback
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Google Ads Dashboard dynamic server listening on host http://localhost:${PORT}`);
-  });
-}
-
-startServer();
+export default app;

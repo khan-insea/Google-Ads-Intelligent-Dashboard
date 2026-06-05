@@ -78,8 +78,12 @@ export class DBManager {
   }
 
   public save() {
-    this.ensureDirectory();
-    fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
+    try {
+      this.ensureDirectory();
+      fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
+    } catch (err) {
+      console.warn('Unable to write to file system (read-only environment like Vercel). Changes will persist in memory for the container lifetime.', err);
+    }
   }
 
   // Getters for each table

@@ -22,23 +22,23 @@ export default function LoginView({ onLoginSuccess }: LoginViewProps) {
     setError(null);
 
     try {
-      const res = await fetch('/api/auth/password-login', {
+      const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password })
       });
 
-      const data = await res.json();
-      if (data.success) {
+      const data = await res.json().catch(() => null);
+      if (data && data.success) {
         // Save session locally
         localStorage.setItem('admin_token', data.token);
         localStorage.setItem('admin_user', JSON.stringify(data.user));
         onLoginSuccess(data.user);
       } else {
-        setError(data.message || 'Mật khẩu sai hoặc email chưa đúng cấu hình.');
+        setError(data?.message || 'Mật khẩu sai hoặc email chưa đúng cấu hình.');
       }
-    } catch (err) {
-      setError('Lỗi kết nối máy chủ. Hãy khởi động lại Dev Server.');
+    } catch (err: any) {
+      setError(`Lỗi kết nối máy chủ: ${err.message || 'Hãy thử kiểm tra cấu hình mạng.'}`);
     } finally {
       setLoading(false);
     }
