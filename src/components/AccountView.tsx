@@ -25,6 +25,14 @@ interface AccountViewProps {
   onAccountAdded: () => void;
 }
 
+const formatCustomerId = (idStr: string) => {
+  const clean = idStr.replace(/\D/g, '');
+  if (clean.length === 10) {
+    return `${clean.slice(0, 3)}-${clean.slice(3, 6)}-${clean.slice(6)}`;
+  }
+  return idStr;
+};
+
 export default function AccountView({ selectedAccountId, setSelectedAccountId, onAccountAdded }: AccountViewProps) {
   const [accounts, setAccounts] = useState<GoogleAdsAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,15 +118,18 @@ export default function AccountView({ selectedAccountId, setSelectedAccountId, o
     setFormError(null);
     setSuccessMsg(null);
 
-    // Validate input format
-    const customerPattern = /^\d{3}-\d{3}-\d{4}$/;
-    if (!customerPattern.test(customerId)) {
-      setFormError('ID khách hàng không đúng định dạng (VD: 831-294-1188)');
+    // Normalize IDs (support both 4117057088 and 411-705-7080 formats)
+    const cleanCustomerId = customerId.replace(/\D/g, '');
+    const cleanLoginCustomerId = loginCustomerId ? loginCustomerId.replace(/\D/g, '') : '';
+
+    if (cleanCustomerId.length !== 10) {
+      setFormError('ID khách hàng không đúng định dạng. Phải nhập đúng 10 số (Ví dụ: 411-705-7088 hoặc 4117057088)');
       setAdding(false);
       return;
     }
-    if (loginCustomerId && !customerPattern.test(loginCustomerId)) {
-      setFormError('ID người quản lý MCC không đúng định dạng (VD: 831-294-0000)');
+
+    if (loginCustomerId && cleanLoginCustomerId.length !== 10) {
+      setFormError('ID MCC người quản lý không đúng định dạng. Phải nhập đúng 10 số (Ví dụ: 831-294-0000 hoặc 8312940000)');
       setAdding(false);
       return;
     }
@@ -127,7 +138,11 @@ export default function AccountView({ selectedAccountId, setSelectedAccountId, o
       const res = await fetch('/api/google-ads/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountName, customerId, loginCustomerId })
+        body: JSON.stringify({ 
+          accountName, 
+          customerId: cleanCustomerId, 
+          loginCustomerId: cleanLoginCustomerId 
+        })
       });
 
       const result = await res.json();
@@ -251,11 +266,14 @@ export default function AccountView({ selectedAccountId, setSelectedAccountId, o
                     type="text" 
                     value={customerId}
                     onChange={(e) => setCustomerId(e.target.value)}
-                    placeholder="Dạng: 831-294-1188"
+                    placeholder="Ví dụ: 411-705-7088 hoặc 4117057088"
                     required
                     className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 focus:bg-white text-slate-800 text-sm rounded-xl pl-10 pr-4 py-3 leading-6 outline-none transition"
                   />
                 </div>
+                <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+                  📌 ID tài khoản quảng cáo cần lấy báo cáo.
+                </p>
               </div>
 
               <div>
@@ -269,10 +287,13 @@ export default function AccountView({ selectedAccountId, setSelectedAccountId, o
                     type="text" 
                     value={loginCustomerId}
                     onChange={(e) => setLoginCustomerId(e.target.value)}
-                    placeholder="Dạng: 831-294-0000"
+                    placeholder="Ví dụ: 831-294-0000 hoặc 8312940000"
                     className="w-full bg-slate-50 border border-slate-200 focus:border-blue-500 focus:bg-white text-slate-800 text-sm rounded-xl pl-10 pr-4 py-3 leading-6 outline-none transition"
                   />
                 </div>
+                <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
+                  🏢 ID MCC / Manager Account dùng để phân quyền gọi API. Có thể để trống nếu không dùng MCC.
+                </p>
               </div>
             </div>
 
@@ -328,15 +349,15 @@ export default function AccountView({ selectedAccountId, setSelectedAccountId, o
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 mt-3 text-[11px] text-slate-500">
+                     <div className="grid grid-cols-2 gap-2 mt-3 text-[11px] text-slate-500">
                       <div>
                         <span className="font-bold">Customer ID:</span>
-                        <code className="ml-1 bg-slate-100 text-slate-600 px-1 rounded font-mono">{acc.customerId}</code>
+                        <code className="ml-1 bg-slate-100 text-slate-600 px-1 rounded font-mono">{formatCustomerId(acc.customerId)}</code>
                       </div>
                       {acc.loginCustomerId && (
                         <div>
                           <span className="font-bold">MCC ID:</span>
-                          <code className="ml-1 bg-slate-100 text-slate-605 px-1 rounded font-mono">{acc.loginCustomerId}</code>
+                          <code className="ml-1 bg-slate-100 text-slate-650 px-1 rounded font-mono">{formatCustomerId(acc.loginCustomerId)}</code>
                         </div>
                       )}
                     </div>

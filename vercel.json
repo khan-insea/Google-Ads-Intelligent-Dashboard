@@ -10,6 +10,10 @@
       "destination": "/api/auth/login.ts"
     },
     {
+      "source": "/api/google-ads/accounts",
+      "destination": "/api/google-ads/accounts.ts"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },

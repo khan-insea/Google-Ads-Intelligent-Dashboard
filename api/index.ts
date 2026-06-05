@@ -5,8 +5,6 @@
 
 import express from 'express';
 import dotenv from 'dotenv';
-import { dbStore } from '../src/lib/server/db';
-import { GoogleAdsService } from '../src/lib/server/google_ads_service';
 import { 
   CampaignDailyMetric, 
   MonthlyReport, 
@@ -14,11 +12,39 @@ import {
   GoogleAdsAccount 
 } from '../src/types';
 
+let dbStore: any = null;
+let GoogleAdsService: any = null;
+
+async function initDbAndServices() {
+  if (!dbStore) {
+    const dbModule = await import('../src/lib/server/db');
+    dbStore = dbModule.dbStore;
+  }
+  if (!GoogleAdsService) {
+    const adsModule = await import('../src/lib/server/google_ads_service');
+    GoogleAdsService = adsModule.GoogleAdsService;
+  }
+}
+
 // Load environmental variables safely
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+
+// Lazy-resolve DB/Services middleware before any handler triggers
+app.use(async (req, res, next) => {
+  try {
+    await initDbAndServices();
+    next();
+  } catch (err: any) {
+    console.error('Failed to dynamically load database/service modules inside API index:', err);
+    res.status(500).json({
+      success: false,
+      message: `System Startup Error: Failed to dynamically load database/service modules inside API index: ${err.message || err}`
+    });
+  }
+});
 
 // API: 1. Admin Login Endpoint (POST ONLY)
 app.post('/api/auth/login', (req, res) => {
