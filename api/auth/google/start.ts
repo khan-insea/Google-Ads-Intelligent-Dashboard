@@ -14,8 +14,13 @@ export default async function handler(req: any, res: any) {
   const fallbackRedirectUri = `${protocol}://${host}/api/auth/google/callback`;
   const redirectUri = process.env.GOOGLE_ADS_REDIRECT_URI || fallbackRedirectUri;
 
+  const state = req.query.state || '';
+
   if (!clientId) {
-    const mockAuthUrl = `${protocol}://${host}/api/auth/google/mock-consent?redirect_uri=${encodeURIComponent(redirectUri)}`;
+    let mockAuthUrl = `${protocol}://${host}/api/auth/google/mock-consent?redirect_uri=${encodeURIComponent(redirectUri)}`;
+    if (state) {
+      mockAuthUrl += `&state=${encodeURIComponent(String(state))}`;
+    }
     return res.status(200).json({ url: mockAuthUrl });
   }
 
@@ -27,6 +32,10 @@ export default async function handler(req: any, res: any) {
     access_type: 'offline',
     prompt: 'consent'
   });
+
+  if (state) {
+    params.append('state', String(state));
+  }
 
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   return res.status(200).json({ url: authUrl });

@@ -98,9 +98,17 @@ export class DBManager {
 
   // Writers & Adders
   public addAccount(account: GoogleAdsAccount) {
-    const idx = this.data.google_ads_accounts.findIndex(a => a.id === account.id || a.customerId === account.customerId);
+    const cleanInput = (account.customerId || '').replace(/\D/g, '');
+    const idx = this.data.google_ads_accounts.findIndex(a => {
+      const cleanA = (a.customerId || '').replace(/\D/g, '');
+      return a.id === account.id || (Boolean(cleanA) && cleanA === cleanInput);
+    });
     if (idx !== -1) {
-      this.data.google_ads_accounts[idx] = { ...this.data.google_ads_accounts[idx], ...account };
+      const existing = this.data.google_ads_accounts[idx];
+      account.id = existing.id;
+      account.accountName = existing.accountName;
+      account.createdAt = existing.createdAt || account.createdAt;
+      this.data.google_ads_accounts[idx] = { ...existing, ...account };
     } else {
       this.data.google_ads_accounts.push(account);
     }

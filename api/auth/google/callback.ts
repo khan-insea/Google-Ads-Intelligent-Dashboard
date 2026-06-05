@@ -280,14 +280,26 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // Set fallback customer inputs
-    const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID || '831-294-1188';
-    const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '';
+    // Set fallback customer inputs and normalize cleanly
+    let rawCustomerId = process.env.GOOGLE_ADS_CUSTOMER_ID || '831-294-1188';
+    if (isMock && code.includes('_')) {
+      const parts = code.split('_');
+      const numbers = parts.filter(p => /^\d+$/.test(p));
+      if (numbers.length > 0) {
+        rawCustomerId = numbers.join('');
+      }
+    }
+
+    const customerId = rawCustomerId.replace(/\D/g, "");
+    const loginCustomerId = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/\D/g, "");
+
+    const state = req.query.state || '';
+
     const cleanAccount: DirectGoogleAdsAccount = {
       id: isMock ? 'acc-demo-google-ads' : `acc-live-${Date.now()}`,
       accountName: isMock ? 'A96 Agency - Google Ads Master Account' : 'Live Connected Google Ads Account',
       customerId,
-      loginCustomerId,
+      loginCustomerId: loginCustomerId || undefined,
       status: 'connected',
       lastSyncAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
@@ -304,7 +316,29 @@ export default async function handler(req: any, res: any) {
           'Prefer': 'return=representation'
         };
 
-        // Standard SQL properties
+        // Determine if account already exists in Supabase by state (selected id) or customer_id
+        let checkUrl = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/google_ads_accounts`;
+        if (state) {
+          checkUrl += `?or=(id.eq.${encodeURIComponent(String(state))},customer_id.eq.${encodeURIComponent(customerId)})`;
+        } else {
+          checkUrl += `?customer_id=eq.${encodeURIComponent(customerId)}`;
+        }
+
+        const checkRes = await fetch(checkUrl, { headers });
+        const checkData = checkRes.ok ? await checkRes.json() : [];
+
+        let matchedAccount: any = null;
+        if (Array.isArray(checkData) && checkData.length > 0) {
+          matchedAccount = checkData[0];
+        }
+
+        if (matchedAccount) {
+          // Exists -> UPDATE (keep existing ID, Tên tài khoản, and Ngày tạo)
+          cleanAccount.id = matchedAccount.id;
+          cleanAccount.accountName = matchedAccount.account_name;
+          cleanAccount.createdAt = matchedAccount.created_at || cleanAccount.createdAt;
+        }
+
         const payload = {
           id: cleanAccount.id,
           account_name: cleanAccount.accountName,
@@ -313,27 +347,23 @@ export default async function handler(req: any, res: any) {
           status: cleanAccount.status,
           last_sync_at: cleanAccount.lastSyncAt,
           created_at: cleanAccount.createdAt,
-          refresh_token: cleanAccount.refresh_token // Saved if column existed
+          refresh_token: cleanAccount.refresh_token || null
         };
 
-        // Check if account already exists to decide POST or PATCH
-        const checkUrl = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/google_ads_accounts?id=eq.${cleanAccount.id}`;
-        const checkRes = await fetch(checkUrl, { headers });
-        const checkData = checkRes.ok ? await checkRes.json() : [];
+        const updateUrl = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/google_ads_accounts?id=eq.${cleanAccount.id}`;
 
-        if (Array.isArray(checkData) && checkData.length > 0) {
-          // Exists -> UPDATE
-          const patchRes = await fetch(checkUrl, {
+        if (matchedAccount) {
+          // EXSITS -> PATCH
+          const patchRes = await fetch(updateUrl, {
             method: 'PATCH',
             headers,
             body: JSON.stringify(payload)
           });
           if (!patchRes.ok) {
-            // Non-blocking try: if failed because column refresh_token does not exist on old schema
             const patchPayloadNoToken = { ...payload };
             delete (patchPayloadNoToken as any).refresh_token;
 
-            const secondPatchRes = await fetch(checkUrl, {
+            const secondPatchRes = await fetch(updateUrl, {
               method: 'PATCH',
               headers,
               body: JSON.stringify(patchPayloadNoToken)
@@ -351,7 +381,6 @@ export default async function handler(req: any, res: any) {
             body: JSON.stringify(payload)
           });
           if (!postRes.ok) {
-            // Fallback for deprecated database schemas lacking the 'refresh_token' column
             const payloadNoToken = { ...payload };
             delete (payloadNoToken as any).refresh_token;
 
@@ -401,8 +430,18 @@ export default async function handler(req: any, res: any) {
     try {
       const localData = getLocalData();
       if (!localData.google_ads_accounts) localData.google_ads_accounts = [];
-      const idx = localData.google_ads_accounts.findIndex((a: any) => a.id === cleanAccount.id);
+
+      // Check existence by state (id) or raw customerId
+      const idx = localData.google_ads_accounts.findIndex((a: any) => {
+        const cleanCid = (a.customerId || '').replace(/\D/g, "");
+        return (state && a.id === state) || (cleanCid === cleanAccount.customerId);
+      });
+
       if (idx !== -1) {
+        const existingLocal = localData.google_ads_accounts[idx];
+        cleanAccount.id = existingLocal.id;
+        cleanAccount.accountName = existingLocal.accountName;
+        cleanAccount.createdAt = existingLocal.createdAt || cleanAccount.createdAt;
         localData.google_ads_accounts[idx] = { ...localData.google_ads_accounts[idx], ...cleanAccount };
       } else {
         localData.google_ads_accounts.push(cleanAccount);

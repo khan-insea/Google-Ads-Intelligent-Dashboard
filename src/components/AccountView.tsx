@@ -86,7 +86,8 @@ export default function AccountView({ selectedAccountId, setSelectedAccountId, o
 
   const handleOAuthConnect = async () => {
     try {
-      const response = await fetch('/api/auth/google/start');
+      const url = selectedAccountId ? `/api/auth/google/start?state=${encodeURIComponent(selectedAccountId)}` : '/api/auth/google/start';
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error('Failed to start OAuth consent flow');
       }

@@ -186,25 +186,42 @@ app.get(['/api/auth/google/callback', '/api/auth/google/callback/'], async (req,
   try {
     // Exchange tokens (will return mock tokens if keys not set)
     const tokens = await GoogleAdsService.exchangeCodeForTokens(code, redirectUri);
-    
-    // Save account info
-    const customerId = process.env.GOOGLE_ADS_CUSTOMER_ID || '831-294-1188';
-    const loginCustomerId = process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '';
-    
     const isMock = tokens.refresh_token.startsWith('mock_');
-    const accountName = isMock 
-      ? 'A96 Agency - Google Ads Master Account' 
-      : 'Live Connected Google Ads Account';
+    
+    // Save account info with clean normalization
+    let rawCustomerId = process.env.GOOGLE_ADS_CUSTOMER_ID || '831-294-1188';
+    if (isMock && code.includes('_')) {
+      const parts = code.split('_');
+      const numbers = parts.filter(p => /^\d+$/.test(p));
+      if (numbers.length > 0) {
+        rawCustomerId = numbers.join('');
+      }
+    }
+
+    const customerId = rawCustomerId.replace(/\D/g, "");
+    const loginCustomerId = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/\D/g, "");
+
+    const state = req.query.state || '';
 
     const cleanAccount: GoogleAdsAccount = {
       id: isMock ? 'acc-demo-google-ads' : `acc-live-${Date.now()}`,
-      accountName,
+      accountName: isMock ? 'A96 Agency - Google Ads Master Account' : 'Live Connected Google Ads Account',
       customerId,
-      loginCustomerId,
+      loginCustomerId: loginCustomerId || undefined,
       status: 'connected',
       lastSyncAt: new Date().toISOString(),
       createdAt: new Date().toISOString()
     };
+
+    // Store state in cleanAccount temporarily to trigger proper update mapping
+    if (state) {
+      const existingAccount = dbStore.getAccounts().find((a: any) => a.id === state);
+      if (existingAccount) {
+        cleanAccount.id = existingAccount.id;
+        cleanAccount.accountName = existingAccount.accountName;
+        cleanAccount.createdAt = existingAccount.createdAt || cleanAccount.createdAt;
+      }
+    }
 
     dbStore.addAccount(cleanAccount);
 
@@ -256,19 +273,232 @@ app.get('/api/google-ads/accounts', (req, res) => {
   return res.json({ success: true, data: accounts });
 });
 
+// API: 4.5 Cleanup and Deduplicate accounts endpoint
+app.all('/api/google-ads/cleanup', async (req, res) => {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  const report = {
+    supabase: null as any,
+    localDb: { normalizedCount: 0, mergedIdentifiers: [] as string[], remainingUnique: [] as any[] },
+    success: true,
+  };
+
+  if (supabaseUrl && serviceKey) {
+    try {
+      const headers = {
+        'apikey': serviceKey,
+        'Authorization': `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+      };
+
+      const accountsRes = await fetch(`${supabaseUrl.replace(/\/$/, '')}/rest/v1/google_ads_accounts?select=*`, { headers });
+      if (accountsRes.ok) {
+        const rawAccounts = await accountsRes.json();
+        const groups: Record<string, any[]> = {};
+        for (const acc of rawAccounts) {
+          const cleanCID = (acc.customer_id || '').replace(/\D/g, "");
+          if (!cleanCID) continue;
+          if (!groups[cleanCID]) {
+            groups[cleanCID] = [];
+          }
+          groups[cleanCID].push(acc);
+        }
+
+        const mergedIds: string[] = [];
+        const uniqueAccountsToSave: any[] = [];
+        let normalizedCount = 0;
+
+        for (const [cleanCID, list] of Object.entries(groups)) {
+          let primary = list.find(a => !String(a.account_name || '').includes('Live Connected'));
+          if (!primary) {
+            primary = list[0];
+          }
+
+          const oldCID = primary.customer_id;
+          const oldLCID = primary.login_customer_id;
+          primary.customer_id = cleanCID;
+          primary.login_customer_id = oldLCID ? oldLCID.replace(/\D/g, "") : null;
+
+          if (oldCID !== primary.customer_id || oldLCID !== primary.login_customer_id) {
+            normalizedCount++;
+          }
+
+          uniqueAccountsToSave.push(primary);
+
+          const duplicates = list.filter(a => a.id !== primary.id);
+          for (const dup of duplicates) {
+            mergedIds.push(dup.id);
+
+            const tablesToMigrate = [
+              'campaign_daily_metrics',
+              'ad_group_daily_metrics',
+              'keyword_daily_metrics',
+              'search_term_daily_metrics',
+              'monthly_reports',
+              'sync_logs',
+              'recommendations'
+            ];
+
+            for (const tbl of tablesToMigrate) {
+              const patchUrl = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/${tbl}?google_ads_account_id=eq.${encodeURIComponent(dup.id)}`;
+              await fetch(patchUrl, {
+                method: 'PATCH',
+                headers,
+                body: JSON.stringify({ google_ads_account_id: primary.id })
+              });
+            }
+
+            const deleteUrl = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/google_ads_accounts?id=eq.${encodeURIComponent(dup.id)}`;
+            await fetch(deleteUrl, { headers, method: 'DELETE' });
+          }
+        }
+
+        for (const acc of uniqueAccountsToSave) {
+          const accUrl = `${supabaseUrl.replace(/\/$/, '')}/rest/v1/google_ads_accounts?id=eq.${encodeURIComponent(acc.id)}`;
+          await fetch(accUrl, {
+            method: 'PATCH',
+            headers,
+            body: JSON.stringify({
+              customer_id: acc.customer_id,
+              login_customer_id: acc.login_customer_id,
+              status: acc.status || 'connected'
+            })
+          });
+        }
+
+        report.supabase = {
+          normalizedCount,
+          mergedIdentifiers: mergedIds,
+          remainingUnique: uniqueAccountsToSave.map(a => ({
+            id: a.id,
+            accountName: a.account_name,
+            customerId: a.customer_id,
+            loginCustomerId: a.login_customer_id,
+            status: a.status
+          }))
+        };
+      }
+    } catch (eSupabase) {
+      console.error('Supabase cleanup in server.ts error:', eSupabase);
+    }
+  }
+
+  try {
+    const rawAccounts = dbStore.getAccounts();
+    const groups: Record<string, any[]> = {};
+    for (const acc of rawAccounts) {
+      const cleanCID = (acc.customerId || '').replace(/\D/g, "");
+      if (!cleanCID) continue;
+      if (!groups[cleanCID]) {
+        groups[cleanCID] = [];
+      }
+      groups[cleanCID].push(acc);
+    }
+
+    const mergedIndices: string[] = [];
+    const finalAccounts: any[] = [];
+    let normalizedCount = 0;
+
+    for (const [cleanCID, list] of Object.entries(groups)) {
+      let primary = list.find(a => !String(a.accountName || '').includes('Live Connected'));
+      if (!primary) {
+        primary = list[0];
+      }
+
+      const oldCID = primary.customerId;
+      const oldLCID = primary.loginCustomerId;
+      primary.customerId = cleanCID;
+      primary.loginCustomerId = oldLCID ? oldLCID.replace(/\D/g, "") : "";
+
+      if (oldCID !== primary.customerId || oldLCID !== primary.loginCustomerId) {
+        normalizedCount++;
+      }
+
+      finalAccounts.push(primary);
+
+      const duplicates = list.filter(a => a.id !== primary.id);
+      for (const dup of duplicates) {
+        mergedIndices.push(dup.id);
+
+        const metricsKeys = [
+          'campaign_daily_metrics',
+          'ad_group_daily_metrics',
+          'keyword_daily_metrics',
+          'search_term_daily_metrics',
+          'monthly_reports',
+          'sync_logs',
+          'recommendations'
+        ];
+
+        for (const key of metricsKeys) {
+          const listObj = (dbStore as any).data[key];
+          if (listObj && Array.isArray(listObj)) {
+            listObj.forEach((row: any) => {
+              if (row.googleAdsAccountId === dup.id) {
+                row.googleAdsAccountId = primary.id;
+              }
+            });
+          }
+        }
+      }
+    }
+
+    (dbStore as any).data.google_ads_accounts = finalAccounts;
+    dbStore.save();
+
+    report.localDb = {
+      normalizedCount,
+      mergedIdentifiers: mergedIndices,
+      remainingUnique: finalAccounts.map(a => ({
+        id: a.id,
+        accountName: a.accountName,
+        customerId: a.customerId,
+        loginCustomerId: a.loginCustomerId,
+        status: a.status
+      }))
+    };
+  } catch (eLocal) {
+    console.error('Local db clean-up error in server.ts:', eLocal);
+  }
+
+  return res.json({
+    success: true,
+    message: 'Cleanup và De-duplication hoàn tất thành công trên cơ sở dữ liệu!',
+    data: report
+  });
+});
+
 // API: 5. Connect manual account route for MCC flexibility
 app.post('/api/google-ads/accounts', (req, res) => {
-  const { accountName, customerId, loginCustomerId } = req.body;
+  const { accountName, customerId, loginCustomerId } = req.body || {};
 
   if (!accountName || !customerId) {
     return res.status(400).json({ success: false, message: 'Nhập thiếu Tên tài khoản hoặc Customer ID' });
   }
 
+  const cleanCustomerId = customerId.replace(/\D/g, "");
+  const cleanLoginCustomerId = loginCustomerId ? loginCustomerId.replace(/\D/g, "") : "";
+
+  if (cleanCustomerId.length !== 10) {
+    return res.status(400).json({
+      success: false,
+      message: 'Google Ads Customer ID không hợp lệ. Phải bao gồm đúng 10 số.'
+    });
+  }
+
+  if (loginCustomerId && cleanLoginCustomerId.length !== 10) {
+    return res.status(400).json({
+      success: false,
+      message: 'Login Customer ID không hợp lệ. Phải bao gồm đúng 10 số.'
+    });
+  }
+
   const newAcc: GoogleAdsAccount = {
     id: `acc-manual-${Date.now()}`,
     accountName,
-    customerId,
-    loginCustomerId: loginCustomerId || '',
+    customerId: cleanCustomerId,
+    loginCustomerId: cleanLoginCustomerId || undefined,
     status: 'connected',
     lastSyncAt: new Date().toISOString(),
     createdAt: new Date().toISOString()

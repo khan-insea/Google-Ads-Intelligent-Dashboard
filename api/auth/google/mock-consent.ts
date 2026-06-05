@@ -9,6 +9,10 @@ export default async function handler(req: any, res: any) {
   }
 
   const redirectUri = req.query.redirect_uri || '/api/auth/google/callback';
+  const state = req.query.state || '';
+  const targetRedirect = state 
+    ? `${redirectUri}?code=mock_code_831_294_1188&state=${encodeURIComponent(String(state))}`
+    : `${redirectUri}?code=mock_code_831_294_1188`;
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   return res.status(200).send(`
@@ -65,7 +69,7 @@ export default async function handler(req: any, res: any) {
           <button onclick="window.close()" class="flex-1 py-2.5 border border-slate-205 text-slate-600 rounded-lg text-sm font-semibold hover:bg-slate-50 transition cursor-pointer">
             Hủy bỏ
           </button>
-          <a href="${redirectUri}?code=mock_code_831_294_1188" class="flex-grow text-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold py-2.5 transition cursor-pointer">
+          <a href="${targetRedirect}" class="flex-grow text-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-semibold py-2.5 transition cursor-pointer">
             Cho phép
           </a>
         </div>
