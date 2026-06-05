@@ -1,4 +1,3 @@
-import express from 'express';
 import dotenv from 'dotenv';
 import { dbStore } from '../_lib/db.js';
 import { GoogleAdsService } from '../_lib/google_ads_service.js';
@@ -12,17 +11,46 @@ export default async function handler(req: any, res: any) {
     return res.status(405).json({ success: false, message: 'Method Not Allowed' });
   }
 
-  try {
-    const { accountId, date } = req.body || {};
+  // Check Supabase configurations in Production
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (process.env.NODE_ENV === 'production' || (supabaseUrl && serviceKey)) {
+    if (!supabaseUrl || !serviceKey) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing Supabase environment variables"
+      });
+    }
+  }
 
-    if (!accountId) {
-      return res.status(400).json({ success: false, message: 'Thiếu Google Ads Account ID' });
+  try {
+    // If Supabase environment is valid, make sure we syncOurData first
+    if (supabaseUrl && serviceKey) {
+      await dbStore.syncWithSupabase();
     }
 
+    const { accountId, date } = req.body || {};
     const targetDate = date || new Date().toISOString().split('T')[0];
     const accounts = dbStore.getAccounts();
-    const acc = accounts.find(a => a.id === accountId);
 
+    // Support empty request body by choosing a default account if possible
+    let targetAccountId = accountId;
+    if (!targetAccountId) {
+      if (accounts && accounts.length > 0) {
+        // Find first connected account, or use first account
+        const defaultAcc = accounts.find((a: any) => a.status === 'connected') || accounts[0];
+        targetAccountId = defaultAcc?.id;
+      }
+    }
+
+    if (!targetAccountId) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing accountId' 
+      });
+    }
+
+    const acc = accounts.find(a => a.id === targetAccountId);
     if (!acc) {
       return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản quảng cáo tương ứng' });
     }
@@ -59,13 +87,13 @@ export default async function handler(req: any, res: any) {
       accountName: acc.accountName,
       syncType: 'manual',
       status: result.error ? 'failed' : 'success',
-      rowsInserted: result.rowsCount,
-      errorMessage: result.error,
+      rowsInserted: result.rowsCount || 0,
+      errorMessage: result.error || null,
       startedAt,
       finishedAt
     };
 
-    dbStore.saveSyncLog(syncLogEntry);
+    await dbStore.saveSyncLog(syncLogEntry);
 
     if (result.error) {
       return res.status(400).json({ 
@@ -76,14 +104,16 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    dbStore.updateAccountSync(acc.id, finishedAt);
+    await dbStore.updateAccountSync(acc.id, finishedAt);
 
     return res.status(200).json({ 
       success: true, 
-      message: `Đồng bộ thành công! Đã thêm ${result.rowsCount} dòng dữ liệu của ngày ${targetDate}.`,
+      message: "Đồng bộ dữ liệu Google Ads thành công",
+      details: `Đồng bộ thành công! Đã thêm ${result.rowsCount} dòng dữ liệu của ngày ${targetDate}.`,
       log: syncLogEntry
     });
   } catch (error: any) {
+    console.error('API sync error handler:', error);
     return res.status(500).json({
       success: false,
       message: `Internal Server Error: ${error.message || error}`

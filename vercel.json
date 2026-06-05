@@ -14,6 +14,10 @@
       "destination": "/api/google-ads/accounts.ts"
     },
     {
+      "source": "/api/google-ads/sync",
+      "destination": "/api/google-ads/sync.ts"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
