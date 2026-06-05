@@ -17,7 +17,7 @@ let GoogleAdsService: any = null;
 
 async function initDbAndServices() {
   if (!dbStore) {
-    const dbModule = await import('../src/lib/server/db');
+    const dbModule = await import('./_lib/db');
     dbStore = dbModule.dbStore;
   }
   if (!GoogleAdsService) {

@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { dbStore } from '../../src/lib/server/db';
+import { dbStore } from '../_lib/db';
 import { GoogleAdsService } from '../../src/lib/server/google_ads_service';
 import { SyncLog } from '../../src/types';
 
