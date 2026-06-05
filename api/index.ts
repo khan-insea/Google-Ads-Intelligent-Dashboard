@@ -5,8 +5,8 @@
 
 import express from 'express';
 import dotenv from 'dotenv';
-import { dbStore } from '../server/db';
-import { GoogleAdsService } from '../server/google_ads_service';
+import { dbStore } from '../src/lib/server/db';
+import { GoogleAdsService } from '../src/lib/server/google_ads_service';
 import { 
   CampaignDailyMetric, 
   MonthlyReport, 

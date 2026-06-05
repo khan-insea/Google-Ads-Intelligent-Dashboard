@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { GoogleAdsAccount, CampaignDailyMetric, AdGroupDailyMetric, KeywordDailyMetric } from '../src/types';
+import { GoogleAdsAccount, CampaignDailyMetric } from '../../types';
 import { dbStore } from './db';
 
 export class GoogleAdsService {

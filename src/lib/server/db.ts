@@ -14,9 +14,8 @@ import {
   SearchTermDailyMetric, 
   MonthlyReport, 
   SyncLog, 
-  Recommendation,
-  AnalyticsBreakdown
-} from '../src/types';
+  Recommendation
+} from '../../types';
 
 // Let's establish a simple, file-based database for zero-config persistence
 const DB_FILE = path.join(process.cwd(), 'data', 'db_store.json');
@@ -437,7 +436,7 @@ export class DBManager {
 
     this.data.campaign_daily_metrics = campaignDaily;
 
-    // 4. Generate Ad Group daily metrics
+    // Ad Group daily metrics
     const adGroups: AdGroupDailyMetric[] = [];
     const adGroupConfig = [
       { id: 'ag-1', name: 'Đăng Ký Khóa Học - Brand', campaignId: 'camp-1', campaignName: 'Search - Brand - Việt Nam', clicksShare: 0.7, impsShare: 0.6 },
@@ -451,7 +450,6 @@ export class DBManager {
     ];
 
     adGroupConfig.forEach(ag => {
-      // Create metric for adGroups for the last 15 days
       dateList.slice(15).forEach(date => {
         const campMetric = campaignDaily.find(m => m.campaignId === ag.campaignId && m.date === date);
         if (campMetric) {
@@ -482,7 +480,7 @@ export class DBManager {
     });
     this.data.ad_group_daily_metrics = adGroups;
 
-    // 5. Generate Keyword Metrics
+    // Keyword Metrics
     const keywords: KeywordDailyMetric[] = [];
     const keywordConfig = [
       { text: 'a96 agency', match: 'EXACT' as const, adGroupId: 'ag-1', adGroupName: 'Đăng Ký Khóa Học - Brand', campaignId: 'camp-1', campaignName: 'Search - Brand - Việt Nam', share: 0.6 },
@@ -525,7 +523,7 @@ export class DBManager {
     });
     this.data.keyword_daily_metrics = keywords;
 
-    // 6. Generate Search Terms Metrics
+    // Search Terms Metrics
     const searchTerms: SearchTermDailyMetric[] = [];
     const searchTermsConfig = [
       { text: 'a96 agency tuyển dụng', campaignId: 'camp-1', campaignName: 'Search - Brand - Việt Nam', adGroupId: 'ag-1', adGroupName: 'Đăng Ký Khóa Học - Brand', clicks: 42, imps: 300, cost: 50400, conversions: 0, rec: 'NEGATIVE' as const },
@@ -538,7 +536,7 @@ export class DBManager {
       searchTerms.push({
         id: `st-metric-${idx}`,
         googleAdsAccountId: accountId,
-        date: dateList[dateList.length - 1], // Attach to newest date
+        date: dateList[dateList.length - 1],
         campaignId: st.campaignId,
         campaignName: st.campaignName,
         adGroupId: st.adGroupId,
@@ -557,7 +555,7 @@ export class DBManager {
     });
     this.data.search_term_daily_metrics = searchTerms;
 
-    // 7. Seed Sync Logs
+    // Seed Sync Logs
     const nowISO = new Date().toISOString();
     this.data.sync_logs = [
       {
@@ -593,7 +591,7 @@ export class DBManager {
       }
     ];
 
-    // 8. Generate standard monthly reports
+    // Seed standard monthly reports
     this.data.monthly_reports = [
       {
         id: 'report-may-2026',
