@@ -23,6 +23,15 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+  // Check GOOGLE_ADS_API_VERSION as required
+  const envApiVersion = process.env.GOOGLE_ADS_API_VERSION;
+  if (process.env.NODE_ENV === 'production' && !envApiVersion) {
+    return res.status(400).json({
+      success: false,
+      message: "Missing GOOGLE_ADS_API_VERSION"
+    });
+  }
+
   try {
     // If Supabase environment is valid, make sure we syncOurData first
     if (supabaseUrl && serviceKey) {
@@ -77,6 +86,10 @@ export default async function handler(req: any, res: any) {
       }
     }
 
+    const cleanCid = acc.customerId ? acc.customerId.replace(/\D/g, "") : "";
+    const activeVersion = process.env.GOOGLE_ADS_API_VERSION || (process.env.NODE_ENV === 'production' ? '' : 'v17');
+    const googleAdsUrl = `https://googleads.googleapis.com/${activeVersion}/customers/${cleanCid}/googleAds:search`;
+
     const startedAt = new Date().toISOString();
     const result = await GoogleAdsService.syncGoogleAdsMetrics(acc, targetDate);
     const finishedAt = new Date().toISOString();
@@ -100,6 +113,8 @@ export default async function handler(req: any, res: any) {
         success: false, 
         message: result.error.includes('Google Ads API error') ? result.error : `Google Ads API error: ${result.error}`, 
         details: result.errorDetails || null,
+        apiVersion: activeVersion,
+        googleAdsUrl,
         log: syncLogEntry 
       });
     }
@@ -110,6 +125,8 @@ export default async function handler(req: any, res: any) {
       success: true, 
       message: "Đồng bộ dữ liệu Google Ads thành công",
       details: `Đồng bộ thành công! Đã thêm ${result.rowsCount} dòng dữ liệu của ngày ${targetDate}.`,
+      apiVersion: activeVersion,
+      googleAdsUrl,
       log: syncLogEntry
     });
   } catch (error: any) {

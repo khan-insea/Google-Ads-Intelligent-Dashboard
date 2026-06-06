@@ -137,7 +137,7 @@ export class GoogleAdsService {
         headers['login-customer-id'] = cleanLoginCustomerId;
       }
 
-      const apiVersion = process.env.GOOGLE_ADS_API_VERSION || 'v17';
+      const apiVersion = process.env.GOOGLE_ADS_API_VERSION || (process.env.NODE_ENV === 'production' ? '' : 'v17');
       const url = `https://googleads.googleapis.com/${apiVersion}/customers/${cleanCustomerId}/googleAds:search`;
       console.log(`[GoogleAdsService] Calling Google Ads API from Server: POST ${url}`);
 
